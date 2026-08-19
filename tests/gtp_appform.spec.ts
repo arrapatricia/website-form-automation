@@ -1,12 +1,26 @@
 import { test, expect } from '@playwright/test';
 import { faker } from '@faker-js/faker';
-// Give this specific test 60 seconds to finish instead of 30
-test.setTimeout(60000); 
-test('WPS Website - GTP Application Process', async ({ page }) => {
-  // --- DYNAMIC FAKER VARIABLES ---
+
+test('WPS Website - GTP Application Process', async ({ page }, testInfo) => {  // --- DYNAMIC FAKER VARIABLES ---
+// --- DYNAMIC FAKER & DATE VARIABLES ---
+  
+  // Get today's date
+  const today = new Date();
+  
+  // Gets current month (adds +1 because January is 0) and pads with '0' (e.g., '08' for August)
+  const DEPT_MONTH = String(today.getMonth() + 1).padStart(2, '0'); 
+  const DEPT_DAY = '25'; // You can also make this dynamic using today.getDate() if you want!
+  const DEPT_YEAR = '2026';
+  
+  // Extract just the file name (e.g., "gtp_appform.spec.ts") from Playwright's test tracker
+  const fileName = testInfo.file.split(/[\\/]/).pop();
+
+  // Create unique folder for this specific run
+  const RUN_FOLDER = `screenshots/run-${Date.now()}`;test.setTimeout(60000); 
+test('WPS Website - GTP Application Process', async ({ page }, testInfo) => {  // --- DYNAMIC FAKER VARIABLES ---
   
   // Keep travel dates static so we don't accidentally pick past dates or break business logic
-  const DEPT_MONTH = '12';
+  const DEPT_MONTH = '10';
   const DEPT_DAY = '25';
   const DEPT_YEAR = '2026';
   
@@ -54,8 +68,7 @@ test('WPS Website - GTP Application Process', async ({ page }) => {
 // OLD LINE (Fails because it matches 2 buttons)
   await page.locator('button[data-nextsection="passenger-section"][data-currentsection="coverage-section"]').click();
   await page.waitForTimeout(3000);
-  await page.screenshot({ path: 'travel_details.png' });
-
+  await page.screenshot({ path: `${RUN_FOLDER}/1_${fileName}.png` });
   // ==========================================
   // STEP 2: Fill-Out Traveller Details
   // ==========================================
@@ -83,8 +96,7 @@ test('WPS Website - GTP Application Process', async ({ page }) => {
   await page.locator('#gtp_application_gtp_passenger_info_attributes_phone').fill(MOBILE_NUM);
 
   await page.locator("button[data-nextsection='plan-section']").click();
-  await page.screenshot({ path: 'traveller_information.png' });
-
+  await page.screenshot({ path: `${RUN_FOLDER}/2_${fileName}.png` });
 // ==========================================
   // STEP 3: Select Plan & Optional Coverage
   // ==========================================
@@ -162,4 +174,4 @@ test('WPS Website - GTP Application Process', async ({ page }) => {
   await submitBtn.waitFor({ state: 'visible', timeout: 10000 });
   await expect(submitBtn).toBeEnabled({ timeout: 15000 }); 
   await submitBtn.click();
-});
+})});
