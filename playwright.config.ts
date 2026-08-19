@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import process from 'node:process';
 
 /**
  * Read environment variables from file.
@@ -35,8 +36,8 @@ export default defineConfig({
   /* Configure projects for major browsers */
   projects: [
     {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      name: 'Microsoft Edge',
+      use: { ...devices['Desktop Edge'], channel: 'msedge' },
     },
 
     {
