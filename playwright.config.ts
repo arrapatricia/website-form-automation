@@ -14,32 +14,53 @@ import process from 'node:process';
  */
 export default defineConfig({
   testDir: './tests',
-  /* Run tests in files in parallel */
-  fullyParallel: true,
+  
+  /* FIXED: Match both standard .ts files (like pd_hcp_appform.ts) and .spec.ts files in subfolders */
+  testMatch: ['**/*.ts', '**/*.spec.ts'],
+
+  /* Global timeout for long-running Heroku staging flows (3 mins) */
+  timeout: 180000,
+  
+  /* Opt out of parallel execution so sequential test suites share state reliably */
+  fullyParallel: false,
+  
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
+  
   /* Retry on CI only */
   retries: process.env.CI ? 2 : 0,
-  /* Opt out of parallel tests on CI. */
-  workers: process.env.CI ? 1 : undefined,
   
-  /* FIXED: Set the HTML reporter to open automatically after the run */
-  reporter: [['html', { open: 'always' }]],
+  /* Force 1 worker for sequential suite execution */
+  workers: 1,
   
-  /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
+  /* Console list + HTML reporter configured to open automatically after run */
+  reporter: [
+    ['list'],
+    ['html', { open: 'always' }]
+  ],
+  
+  /* Shared settings for all projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('')`. */
     // baseURL: 'http://localhost:3000',
 
-    /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
-    trace: 'on-first-retry',
-    
-    /* FIXED: Automatically take a screenshot and attach it to the HTML report */
+    /* Force DOM tracing, screenshots, and video for rich report details */
+    trace: 'on',
     screenshot: 'on',
+    video: 'on',
+
+    /* Run tests in headed browser mode by default */
+    headless: false,
+    viewport: { width: 1280, height: 720 },
   },
 
   /* Configure projects for major browsers */
   projects: [
+    {
+      name: 'Google Chrome',
+      use: { ...devices['Desktop Chrome'], channel: 'chrome' },
+    },
+
     {
       name: 'Microsoft Edge',
       use: { ...devices['Desktop Edge'], channel: 'msedge' },
@@ -54,26 +75,6 @@ export default defineConfig({
       name: 'webkit',
       use: { ...devices['Desktop Safari'] },
     },
-
-    /* Test against mobile viewports. */
-    // {
-    //   name: 'Mobile Chrome',
-    //   use: { ...devices['Pixel 5'] },
-    // },
-    // {
-    //   name: 'Mobile Safari',
-    //   use: { ...devices['iPhone 12'] },
-    // },
-
-    /* Test against branded browsers. */
-    // {
-    //   name: 'Microsoft Edge',
-    //   use: { ...devices['Desktop Edge'], channel: 'msedge' },
-    // },
-    // {
-    //   name: 'Google Chrome',
-    //   use: { ...devices['Desktop Chrome'], channel: 'chrome' },
-    // },
   ],
 
   /* Run your local dev server before starting the tests */
