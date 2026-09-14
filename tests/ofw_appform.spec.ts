@@ -80,7 +80,11 @@ test.describe.serial('OFW Application and Payment Suite', () => {
     };
 
     // INITIAL STEP: Referral Option ("How did you learn about Paramount")
-    await page.locator('#referral_select_facebook').check({ force: true });
+    // Note: "facebook" is checked by default on page load, so only click if it isn't already selected.
+    const referralFacebook = page.locator('#referral_select_facebook');
+    if (!(await referralFacebook.isChecked())) {
+      await referralFacebook.dispatchEvent('click');
+    }
 
     // STEP 1: Personal Information
     await page.locator('#ofw_application_ofw_personal_info_attributes_last_name').fill(createdLastName);
@@ -189,19 +193,13 @@ test.describe.serial('OFW Application and Payment Suite', () => {
       await otpInputs.nth(i).pressSequentially(hardcodedOtp[i], { delay: 150 });
     }
 
-    // 1. Click VERIFY button on OTP Modal
-    const verifyModalBtn = page.locator('#submit-application, button:has-text("VERIFY")').first();
-    await expect(verifyModalBtn).toBeEnabled({ timeout: 10000 });
-    await verifyModalBtn.click();
+    // Click SUBMIT on the OTP modal - this single click both verifies the OTP
+    // and submits the application (there is no separate summary-page submit step).
+    const submitBtn = page.locator('#submit-application');
+    await expect(submitBtn).toBeEnabled({ timeout: 10000 });
+    await submitBtn.click();
 
-    // 2. Click final SUBMIT button on summary card
-    await page.waitForTimeout(1000);
-    const finalSubmitBtn = page.locator('button:has-text("SUBMIT"), input[type="submit"][value="SUBMIT"]').last();
-    if (await finalSubmitBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await finalSubmitBtn.click();
-    }
-
-    // 3. Wait for redirect to Thank You page
+    // Wait for redirect to Thank You page
     await page.waitForURL('**/thank-you**', { timeout: 60000 });
     await page.waitForLoadState('domcontentloaded');
 
