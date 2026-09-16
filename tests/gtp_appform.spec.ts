@@ -154,35 +154,51 @@ test('WPS Website - GTP Application Process', async ({ page }, testInfo) => {
   await page.locator("(//input[contains(@class, 'otp-input')])[3]").fill('4');
   await page.locator("(//input[contains(@class, 'otp-input')])[4]").fill('7');
   await page.locator("(//input[contains(@class, 'otp-input')])[5]").fill('9');
-  await page.locator("(//input[contains(@class, 'otp-input')])[6]").fill('3');
-
-  // 3. Handle reCAPTCHA Iframe (Forced Frontend Bypass)
-  const SITE_KEY = '6LeKQg4qAAAAAG4WHzEorw2EZ818uC1ec7nvBX54';
-  const SECRET_KEY = '6LeKQg4qAAAAADmyBwWQW-lIqGH85Dj99OTELCxa';
-
-  const recaptchaFrame = page.frameLocator('iframe[title="reCAPTCHA"]');
-  const recaptchaCheckbox = recaptchaFrame.locator('div.recaptcha-checkbox-border');
   
-  await recaptchaCheckbox.waitFor({ state: 'visible', timeout: 10000 });
-  await recaptchaCheckbox.click();
+  // Use pressSequentially on the last digit to trigger keyboard event listeners
+  const lastOtpInput = page.locator("(//input[contains(@class, 'otp-input')])[6]");
+  await lastOtpInput.focus();
+  await lastOtpInput.pressSequentially('3');
   
-  // Forcefully inject your secret key into the hidden reCAPTCHA response field.
-  // This tricks the frontend UI into unlocking the Submit button.
-  await page.evaluate((secret) => {
-    const responseField = document.querySelector('#g-recaptcha-response');
-    if (responseField) {
-      responseField.innerHTML = secret;
-    }
-  }, SECRET_KEY);
+  // Click the body to remove focus (triggering 'blur') in case validation requires it
+  await page.locator('body').click();
 
-  await page.waitForTimeout(2000);
+  // 3. Extract Plan & Premium data dynamically before submitting
+  const planName = 'Economy'; // Hardcoded because we selected the first plan earlier
+  const rawPremiumText = await page.getByText(/Premium:\s*PHP/i).first().textContent();
+  // Strip out the word "Premium:" to just get the amount
+  const premiumAmount = rawPremiumText ? rawPremiumText.replace(/Premium:\s*/i, '').trim() : 'PHP 0.00';
 
   // 4. Submit Application
-  const submitBtn = page.locator('#submit-application');
-  await submitBtn.evaluate(node => node.removeAttribute('disabled'));
+  // Wait for the system to validate the OTP and naturally enable the submit button
+  const submitBtn = page.getByRole('button', { name: 'SUBMIT', exact: true });
+  await expect(submitBtn).toBeEnabled({ timeout: 15000 });
   
-  // Force the click to bypass the reCAPTCHA overlay intercepting the pointer
-  await submitBtn.click({ force: true });  
-  // Wait a few seconds for the success page to load before the test ends
-  await page.waitForTimeout(3000); 
+  // Click normally
+  await submitBtn.click();
+  
+  // 5. Wait for redirect and Print Details
+  // Wait for the success page network traffic to settle
+  await page.waitForLoadState('networkidle');
+
+  // Grab the final URL
+  const successUrl = page.url();
+
+  // Attempt to extract the reference number. 
+  // NOTE: If the URL uses a specific query parameter (like ?reference_no=123), 
+  // change 'ref' below to match it. Otherwise, this grabs the last part of the URL path.
+  const urlObj = new URL(successUrl);
+  const referenceNumber = urlObj.searchParams.get('ref') || successUrl.split('/').pop();
+
+  // Print the final details to the terminal
+  console.log('\n==========================================');
+  console.log('✅ APPLICATION SUBMITTED SUCCESSFULLY');
+  console.log('==========================================');
+  console.log(`First Name     : ${FIRST_NAME}`);
+  console.log(`Last Name      : ${LAST_NAME}`);
+  console.log(`Country        : Japan`); 
+  console.log(`Days of Travel : 365`);
+  console.log(`Plan           : ${planName}`);
+  console.log(`Premium        : ${premiumAmount}`);
+  console.log('==========================================\n');
 });
