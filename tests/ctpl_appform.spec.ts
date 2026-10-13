@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { faker } from '@faker-js/faker';
 
-test.setTimeout(120000); 
+test.setTimeout(240000);
 
 // Global variables
 let paymentUrl = '';
@@ -74,11 +74,28 @@ test.describe.serial('CTPL End-to-End Flow', () => {
     await page.locator('#btn-contact').evaluate((btn: HTMLButtonElement) => btn.click());
 
     await page.locator('#policy_type').waitFor({ state: 'visible' });
-    await page.locator('#policy_type').selectOption({ value: '1' }); 
-    await page.waitForTimeout(2000); 
-    await page.locator('#mv_type').selectOption({ label: 'Car' });     
-    await page.locator('input[name="has_added_vfee"][value="yes"]').check();
-    await page.locator('#btn-policy').evaluate((btn: HTMLButtonElement) => btn.click());
+    await page.locator('#policy_type').selectOption({ value: '1' });
+    await page.waitForTimeout(2000);
+    await page.locator('#mv_type').selectOption({ label: 'Car' });
+
+    // Private Car base premium before the COV fee
+    await expect(page.locator('#total_premium')).toContainText('606.00', { timeout: 15000 });
+
+    // VVIP region dropdown replaced the old has_added_vfee Yes/No radio.
+    // Selecting a region triggers an async fee lookup that the Next button waits on.
+    const ltoRegion = page.locator('#lto_region');
+    if (await ltoRegion.count() > 0) {
+        await Promise.all([
+            page.waitForResponse(resp => resp.url().includes('/ctpl-vvip-fees') && resp.status() === 200),
+            ltoRegion.selectOption({ index: 1 }),
+        ]);
+    }
+
+    // 606.00 base + 74.00 COV verification fee = 680.00
+    await expect(page.locator('#total_premium')).toContainText('680.00', { timeout: 15000 });
+
+    await expect(page.locator('#btn-policy')).toBeEnabled({ timeout: 15000 });
+    await page.locator('#btn-policy').click();
 
     await page.locator('#c2c_car_info_year_model').waitFor({ state: 'visible' });
     await page.locator('#policy_product_line_id_1').check();
@@ -103,19 +120,33 @@ test.describe.serial('CTPL End-to-End Flow', () => {
     await page.locator('#dpa_c').check();
     await page.locator('#dpa_d').check();
     await page.locator('#dpa_e').check();
+    // Checking all five individually already auto-checks #dpa_all via the page's own
+    // sync handler — clicking "Accept all terms" afterward would toggle it back off
+    // and cascade-uncheck a-e again, so it's intentionally not clicked here.
 
-    const acceptAllTermsBtn = page.getByText('Accept all terms and conditions stated above.');
-    if (await acceptAllTermsBtn.isVisible()) {
-        await acceptAllTermsBtn.click();
+    // Mobile OTP verification now gates submission (previously a direct .btn-confirm click).
+    const sendOtpLink = page.locator('#send-otp-link');
+    await sendOtpLink.waitFor({ state: 'visible', timeout: 10000 });
+    await Promise.all([
+        page.waitForResponse(resp => resp.url().includes('send-otp') && resp.status() === 200, { timeout: 15000 }),
+        sendOtpLink.click(),
+    ]);
+
+    const otpInputs = page.locator('.otp-input');
+    await expect(otpInputs.first()).toBeEnabled({ timeout: 30000 });
+
+    const hardcodedOtp = '834793';
+    for (let i = 0; i < hardcodedOtp.length; i++) {
+        await otpInputs.nth(i).click();
+        await otpInputs.nth(i).pressSequentially(hardcodedOtp[i], { delay: 150 });
     }
+    await page.locator('body').click();
 
-    const confirmBtn = page.locator('.btn-confirm');
-    await confirmBtn.evaluate((node: HTMLButtonElement) => {
-        node.classList.remove('disabled');
-        node.click(); 
-    });
+    const submitBtn = page.locator('#submit-application');
+    await expect(submitBtn).toBeEnabled({ timeout: 15000 });
+    await submitBtn.click();
 
-    await page.waitForURL('**/payment-instructions/**', { timeout: 30000 }); 
+    await page.waitForURL('**/payment-instructions/**', { timeout: 30000 });
     paymentUrl = page.url(); 
     
     console.log('\n=========================================');
@@ -133,7 +164,7 @@ test.describe.serial('CTPL End-to-End Flow', () => {
 
     await page.goto(paymentUrl, { waitUntil: 'domcontentloaded' });
 
-    await page.getByRole('checkbox').first().check();
+    await page.getByRole('checkbox').first().check({ force: true });
     await page.locator('img[src*="online_icon.png"]').click();
     await page.locator('img[alt="BDO Online Bills Payment"]').click();
     await page.locator('#modal_btn_ok').click();
@@ -188,4 +219,77 @@ test.describe.serial('CTPL End-to-End Flow', () => {
     console.log(`🆔 Application ID: ${paymentUrl.split('/').pop()}`);
     console.log('=========================================\n');
   });
+});
+
+// ====================================================================
+// PREMIUM CHECK PER POLICY TYPE / MV TYPE
+// Stops at the policy step (no application is submitted). Reads the base
+// premium the site returns, then verifies selecting a region adds the 74 COV fee.
+// ====================================================================
+const COV_FEE = 74;
+const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const PREMIUM_CASES = [
+  { name: 'Private Car / Car', policyValue: '1', mvValue: '1' },
+  { name: 'Commercial Vehicle / Truck', policyValue: '2', mvValue: '9' },
+  { name: 'Commercial Vehicle / Trailer', policyValue: '2', mvValue: '10' },
+  { name: 'Commercial Vehicle / Utility Vehicle', policyValue: '2', mvValue: '11' },
+  { name: 'Commercial Vehicle / Shuttle Bus', policyValue: '2', mvValue: '2' },
+  { name: 'Motorcycle / Motorcycle', policyValue: '3', mvValue: '3' },
+  { name: 'Motorcycle / Motorcycle with Side Car', policyValue: '3', mvValue: '4' },
+  { name: 'Motorcycle / Tricycle', policyValue: '3', mvValue: '13' },
+  { name: 'Motorcycle / Non-Conventional MV', policyValue: '3', mvValue: '14' },
+];
+
+test.describe('CTPL Premium Check - Base + 74 COV Fee', () => {
+  for (const c of PREMIUM_CASES) {
+    test(`Premium: ${c.name}`, async ({ page }) => {
+      await page.goto('https://ctpl-demo.herokuapp.com/apply', { waitUntil: 'domcontentloaded' });
+      const reminderModal = page.locator('.modal-content', { has: page.locator('h3.modal-title', { hasText: 'Reminder' }) });
+      const closeReminderBtn = reminderModal.getByLabel('Close');
+      await closeReminderBtn.waitFor({ state: 'visible', timeout: 15000 });
+      await closeReminderBtn.click();
+
+      await page.locator('#paramount_client_contact_info_email_address').fill('qatest0321@gmail.com');
+      await page.locator('#paramount_client_first_name').fill(faker.person.firstName());
+      await page.locator('#paramount_client_surname').fill(faker.person.lastName());
+      await page.locator('#c2c_car_info_plate_number').fill(faker.string.alpha(3).toUpperCase() + faker.string.numeric(4));
+      await page.locator('#paramount_client_same_with_owner').selectOption({ label: 'Yes' });
+      await page.locator('#btn-personal').click();
+
+      await page.locator('#paramount_client_contact_info_address_number').waitFor({ state: 'visible' });
+      await page.locator('#paramount_client_contact_info_address_number').fill(faker.location.buildingNumber());
+      await page.locator('#paramount_client_contact_info_address_street').fill(faker.location.street());
+      await page.locator('#paramount_client_contact_info_address_barangay').fill('Barangay 1');
+      await page.locator('#paramount_client_contact_info_address_province').selectOption({ label: 'Cebu' });
+      await page.waitForTimeout(2000);
+      await page.locator('#paramount_client_contact_info_address_city').selectOption({ index: 1 });
+      await page.locator('#paramount_client_contact_info_mobile_number').fill('9171234567');
+      await page.locator('#paramount_client_contact_info_telephone_number').fill(faker.string.numeric(7));
+      await page.locator('#btn-contact').evaluate((btn: HTMLButtonElement) => btn.click());
+
+      await page.locator('#policy_type').waitFor({ state: 'visible' });
+      await page.locator('#policy_type').selectOption({ value: c.policyValue });
+      await page.waitForTimeout(2000);
+      await page.locator('#mv_type').selectOption({ value: c.mvValue });
+
+      const totalPremium = page.locator('#total_premium');
+      await expect.poll(async () => parseFloat((await totalPremium.getAttribute('data-base-premium')) || '0'), { timeout: 15000 }).toBeGreaterThan(0);
+      const base = parseFloat((await totalPremium.getAttribute('data-base-premium')) || '0');
+
+      // No region selected yet: total is just the base premium
+      await expect(totalPremium).toContainText(money(base));
+
+      const ltoRegion = page.locator('#lto_region');
+      await Promise.all([
+        page.waitForResponse(resp => resp.url().includes('/ctpl-vvip-fees') && resp.status() === 200),
+        ltoRegion.selectOption({ index: 1 }),
+      ]);
+
+      await expect(totalPremium).toContainText(money(base + COV_FEE), { timeout: 15000 });
+      await expect(page.locator('#btn-policy')).toBeEnabled({ timeout: 15000 });
+
+      console.log(`✅ ${c.name}: base ${money(base)} + ${COV_FEE} = ${money(base + COV_FEE)}`);
+    });
+  }
 });
