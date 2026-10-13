@@ -1,7 +1,19 @@
 import { test, expect, type Page } from '@playwright/test';
 import { faker } from '@faker-js/faker';
+import * as fs from 'fs';
+import * as path from 'path';
 
 test.setTimeout(240000);
+
+// Proof of testing: every premium screenshot/video is saved here as <browser>_<label>.<ext>
+const PROOF_DIR = path.join(process.cwd(), 'proof', 'premium');
+const proofFile = (browser: string, label: string, ext: string) =>
+  path.join(PROOF_DIR, `${browser}_${label}`.replace(/[^a-zA-Z0-9._-]+/g, '-') + `.${ext}`);
+async function proofShot(page: Page, browser: string, label: string) {
+  fs.mkdirSync(PROOF_DIR, { recursive: true });
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: proofFile(browser, label, 'png') });
+}
 
 // Global variables
 let paymentUrl = '';
@@ -17,8 +29,11 @@ test.describe.serial('CTPL End-to-End Flow', () => {
   });
 
   // Teardown: Close the page when all tests are finished
-  test.afterAll(async () => {
+  test.afterAll(async ({}, testInfo) => {
+    fs.mkdirSync(PROOF_DIR, { recursive: true });
+    const video = page.video();
     await page.close();
+    await video?.saveAs(proofFile(testInfo.project.name, 'e2e-flow-video', 'webm'));
   });
 
   // ====================================================================
@@ -80,6 +95,8 @@ test.describe.serial('CTPL End-to-End Flow', () => {
 
     // Private Car base premium before the COV fee
     await expect(page.locator('#total_premium')).toContainText('606.00', { timeout: 15000 });
+    await page.locator('#total_premium').scrollIntoViewIfNeeded();
+    await proofShot(page, testInfo.project.name, 'e2e-1-private-car-base-606');
 
     // VVIP region dropdown replaced the old has_added_vfee Yes/No radio.
     // Selecting a region triggers an async fee lookup that the Next button waits on.
@@ -93,6 +110,8 @@ test.describe.serial('CTPL End-to-End Flow', () => {
 
     // 606.00 base + 74.00 COV verification fee = 680.00
     await expect(page.locator('#total_premium')).toContainText('680.00', { timeout: 15000 });
+    await page.locator('#total_premium').scrollIntoViewIfNeeded();
+    await proofShot(page, testInfo.project.name, 'e2e-2-private-car-with-region-680');
 
     await expect(page.locator('#btn-policy')).toBeEnabled({ timeout: 15000 });
     await page.locator('#btn-policy').click();
@@ -114,6 +133,8 @@ test.describe.serial('CTPL End-to-End Flow', () => {
     await page.locator('button#submit-btn', { hasText: 'Review Application' }).evaluate((btn: HTMLButtonElement) => btn.click());
 
     await expect(page.locator('h4:has-text("Client Information")')).toBeVisible({ timeout: 15000 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await proofShot(page, testInfo.project.name, 'e2e-3-review-application-premium');
     await page.locator('#dpa_a').scrollIntoViewIfNeeded();
     await page.locator('#dpa_a').check();
     await page.locator('#dpa_b').check();
@@ -147,8 +168,9 @@ test.describe.serial('CTPL End-to-End Flow', () => {
     await submitBtn.click();
 
     await page.waitForURL('**/payment-instructions/**', { timeout: 30000 });
-    paymentUrl = page.url(); 
-    
+    paymentUrl = page.url();
+    await proofShot(page, testInfo.project.name, 'e2e-4-payment-instructions');
+
     console.log('\n=========================================');
     console.log(`✅ TEST 1 COMPLETE | APPLICATION SUBMITTED!`);
     console.log(`👤 Name: ${appliedFirstName} ${appliedLastName}`);
@@ -159,10 +181,11 @@ test.describe.serial('CTPL End-to-End Flow', () => {
   // ====================================================================
   // TEST 2: PAYMENT PROCESS (BDO)
   // ====================================================================
-  test('CTPL Website - BDO Payment Process', async ({}) => {
+  test('CTPL Website - BDO Payment Process', async ({}, testInfo) => {
     test.skip(!paymentUrl, 'Skipping payment test because the application test did not generate a URL.');
 
     await page.goto(paymentUrl, { waitUntil: 'domcontentloaded' });
+    await proofShot(page, testInfo.project.name, 'e2e-5-payment-page');
 
     await page.getByRole('checkbox').first().check({ force: true });
     await page.locator('img[src*="online_icon.png"]').click();
@@ -211,8 +234,9 @@ test.describe.serial('CTPL End-to-End Flow', () => {
     await page.locator('button#submit-btn', { hasText: 'Submit' }).click();
     await page.locator('button#submit-btn', { hasText: 'Done' }).click();
 
-    await page.waitForTimeout(5000); 
-    
+    await page.waitForTimeout(5000);
+    await proofShot(page, testInfo.project.name, 'e2e-6-payment-result');
+
     console.log('\n=========================================');
     console.log(`✅ TEST 2 COMPLETE | PAYMENT SUCCESSFUL!`);
     console.log(`👤 Name: ${appliedFirstName} ${appliedLastName}`);
@@ -243,7 +267,11 @@ const PREMIUM_CASES = [
 
 test.describe('CTPL Premium Check - Base + 74 COV Fee', () => {
   for (const c of PREMIUM_CASES) {
-    test(`Premium: ${c.name}`, async ({ page }) => {
+    test(`Premium: ${c.name}`, async ({ page }, testInfo) => {
+      const proofDir = path.join(process.cwd(), 'proof', 'premium');
+      fs.mkdirSync(proofDir, { recursive: true });
+      const shotName = `${testInfo.project.name}_${c.name}`.replace(/[^a-zA-Z0-9]+/g, '-');
+
       await page.goto('https://ctpl-demo.herokuapp.com/apply', { waitUntil: 'domcontentloaded' });
       const reminderModal = page.locator('.modal-content', { has: page.locator('h3.modal-title', { hasText: 'Reminder' }) });
       const closeReminderBtn = reminderModal.getByLabel('Close');
@@ -279,6 +307,9 @@ test.describe('CTPL Premium Check - Base + 74 COV Fee', () => {
 
       // No region selected yet: total is just the base premium
       await expect(totalPremium).toContainText(money(base));
+      await totalPremium.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: path.join(proofDir, `${shotName}_1-base.png`) });
 
       const ltoRegion = page.locator('#lto_region');
       await Promise.all([
@@ -288,8 +319,96 @@ test.describe('CTPL Premium Check - Base + 74 COV Fee', () => {
 
       await expect(totalPremium).toContainText(money(base + COV_FEE), { timeout: 15000 });
       await expect(page.locator('#btn-policy')).toBeEnabled({ timeout: 15000 });
+      await totalPremium.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: path.join(proofDir, `${shotName}_2-with-region.png`) });
+
+      const regionLabel = (await ltoRegion.locator('option:checked').textContent())?.trim() ?? '';
+      fs.appendFileSync(
+        path.join(proofDir, 'results.csv'),
+        `"${testInfo.project.name}","${c.name}","${regionLabel}",${money(base).replace(/,/g, '')},${COV_FEE},${money(base + COV_FEE).replace(/,/g, '')},PASS\n`
+      );
 
       console.log(`✅ ${c.name}: base ${money(base)} + ${COV_FEE} = ${money(base + COV_FEE)}`);
+
+      const video = page.video();
+      await page.close();
+      await video?.saveAs(path.join(proofDir, `${shotName}.webm`));
     });
   }
+});
+
+// ====================================================================
+// PREMIUM CHECK FOR EVERY REGION (Private Car / Car)
+// Selects each region in the dropdown and captures the premium shown.
+// Regions with no COV (QB-49 rule): CAR (2), Region I (3), BARMM (18) -> base only.
+// All other regions -> base + 74. Soft assertions so every region is captured.
+// ====================================================================
+const NO_COV_REGION_VALUES = ['2', '3', '18'];
+
+test.describe('CTPL Premium Check - All Regions', () => {
+  test('Premium per region: Private Car / Car', async ({ page }, testInfo) => {
+    const browserName = testInfo.project.name;
+    fs.mkdirSync(PROOF_DIR, { recursive: true });
+
+    await page.goto('https://ctpl-demo.herokuapp.com/apply', { waitUntil: 'domcontentloaded' });
+    const reminderModal = page.locator('.modal-content', { has: page.locator('h3.modal-title', { hasText: 'Reminder' }) });
+    const closeReminderBtn = reminderModal.getByLabel('Close');
+    await closeReminderBtn.waitFor({ state: 'visible', timeout: 15000 });
+    await closeReminderBtn.click();
+
+    await page.locator('#paramount_client_contact_info_email_address').fill('qatest0321@gmail.com');
+    await page.locator('#paramount_client_first_name').fill(faker.person.firstName());
+    await page.locator('#paramount_client_surname').fill(faker.person.lastName());
+    await page.locator('#c2c_car_info_plate_number').fill(faker.string.alpha(3).toUpperCase() + faker.string.numeric(4));
+    await page.locator('#paramount_client_same_with_owner').selectOption({ label: 'Yes' });
+    await page.locator('#btn-personal').click();
+
+    await page.locator('#paramount_client_contact_info_address_number').waitFor({ state: 'visible' });
+    await page.locator('#paramount_client_contact_info_address_number').fill(faker.location.buildingNumber());
+    await page.locator('#paramount_client_contact_info_address_street').fill(faker.location.street());
+    await page.locator('#paramount_client_contact_info_address_barangay').fill('Barangay 1');
+    await page.locator('#paramount_client_contact_info_address_province').selectOption({ label: 'Cebu' });
+    await page.waitForTimeout(2000);
+    await page.locator('#paramount_client_contact_info_address_city').selectOption({ index: 1 });
+    await page.locator('#paramount_client_contact_info_mobile_number').fill('9171234567');
+    await page.locator('#paramount_client_contact_info_telephone_number').fill(faker.string.numeric(7));
+    await page.locator('#btn-contact').evaluate((btn: HTMLButtonElement) => btn.click());
+
+    await page.locator('#policy_type').waitFor({ state: 'visible' });
+    await page.locator('#policy_type').selectOption({ value: '1' });
+    await page.waitForTimeout(2000);
+    await page.locator('#mv_type').selectOption({ value: '1' });
+
+    const totalPremium = page.locator('#total_premium');
+    await expect(totalPremium).toContainText(money(606), { timeout: 15000 });
+
+    const ltoRegion = page.locator('#lto_region');
+    const regions = await ltoRegion.locator('option').evaluateAll((opts) =>
+      (opts as HTMLOptionElement[]).filter((o) => o.value !== '').map((o) => ({ value: o.value, label: (o.textContent || '').trim() })));
+    expect(regions.length).toBeGreaterThan(0);
+
+    const rows: string[] = ['"Browser","Region","Region value","Expected COV fee","Expected total","Result"'];
+    for (const [i, r] of regions.entries()) {
+      const fee = NO_COV_REGION_VALUES.includes(r.value) ? 0 : COV_FEE;
+      await Promise.all([
+        page.waitForResponse((resp) => resp.url().includes('/ctpl-vvip-fees') && resp.status() === 200),
+        ltoRegion.selectOption({ value: r.value }),
+      ]);
+      await page.waitForTimeout(1000);
+      await totalPremium.scrollIntoViewIfNeeded();
+
+      const shown = ((await totalPremium.textContent()) || '').replace(/\s+/g, ' ').trim();
+      const ok = shown.includes(money(606 + fee));
+      await expect.soft(totalPremium, `${r.label}: expected ${money(606 + fee)}, shown ${shown}`).toContainText(money(606 + fee), { timeout: 5000 });
+      await proofShot(page, browserName, `region-${String(i + 1).padStart(2, '0')}-${r.label}`);
+      rows.push(`"${browserName}","${r.label}",${r.value},${fee},${money(606 + fee).replace(/,/g, '')},"${ok ? 'PASS' : 'FAIL (shown ' + shown + ')'}"`);
+      console.log(`${ok ? '✅' : '❌'} ${r.label}: expected ${money(606 + fee)} | shown ${shown}`);
+    }
+    fs.writeFileSync(proofFile(browserName, 'regions-results', 'csv'), rows.join('\n') + '\n');
+
+    const video = page.video();
+    await page.close();
+    await video?.saveAs(proofFile(browserName, 'regions-video', 'webm'));
+  });
 });
